@@ -4,11 +4,8 @@ import os, time, socket
 import re
 ## user module
 #import shlex
-from optimer import timer
-from opmsg import opmsg
-from opDISPLAY import DISPLAY
-from opprocess import opprocess
 from opfilehandle import tailf, filetail
+from subprocess import Popen, PIPE, STDOUT
 #from oplsf import oplsf
 ###
 # from issue
@@ -18,49 +15,99 @@ SCREEN_LS_COLORS     = 'no=00:fi=02;31:di=02;34:ln=02;36:pi=40;33:so=02;31:bd=40
 
 ADV_SCREEN_VERSION = ['4.03.01', '4.01.00devel']
 
+
+
+class timer(object):
+    def __init__(self,thr=5):
+        self.thr = thr
+        self.s = time.time()
+        self.step = 0.1
+        self.e = time.time()
+        self.diff = self.e - self.s
+
+    def reset(self):
+        self.s   = time.time()
+
+    @property
+    def timeout(self):
+        self.e = time.time()
+        self.diff = self.e - self.s
+        if self.diff > self.thr:
+            return True
+        time.sleep(self.step)
+        return False
+
+   
+def getoutput(cmd, wait=True, quiet=False, empty_thr = 5):
+    lines = []
+    p = Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT, executable='/bin/csh')
+    cnt = 0
+    while p.stdout and wait:
+        line = p.stdout.readline().strip()
+        if line != '':
+            lines.append(line)
+            if not quiet: print ("%s" % (line) )
+            cnt = 0
+        else:
+            cnt += 1
+        #p.stdout.flush()
+        if cnt > empty_thr:
+            break
+    return lines
+
+def getstderr(cmd, quiet=False):
+    lines = []
+    p = Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
+    while p.stdout:
+        line = p.stdout.readline().strip()
+        if re.match('^Error', line):
+            lines.append(line)
+            if not quiet: print("%s" % (line) )
+        #p.stdout.flush()
+        if not line: break
+    return lines
+
 def list_screens():
     """List all the existing screens and build a Screen instance for each
     """
-    screen_names = [ ".".join(l.split(".")[1:]).split("\t")[0] for l in opprocess().getoutput("screen -ls | grep -P '\t'", quiet=True) if ".".join(l.split(".")[1:]).split("\t")[0] ]
+    screen_names = [ ".".join(l.split(".")[1:]).split("\t")[0] for l in getoutput("screen -ls | grep -P '\t'", quiet=True) if ".".join(l.split(".")[1:]).split("\t")[0] ]
     #print screen_names
     return [ screen(name=l) for l in screen_names ]
 
 #---------------
 #- screen
 #---------------
-class screen(DISPLAY, opprocess, opmsg):
+class screen(object):
     def __init__(self, *args, **kwargs):
         self.name          = kwargs.get('name', '')
         self.remotehost    = kwargs.get('remotehost', socket.gethostname())
-        self.en_lsf        = kwargs.get('en_lsf', True)
-        
-        super(screen, self).__init__(*args, **kwargs)
 
         self.screen_log       = './.screen/%s.log' % (self.name)
         self.timeout_thr   = 20
         self.hostname      = socket.gethostname()
         self.currenthost   = ''
-        self.DISP          = self.original
-        self.check()
+        if hasattr(self, 'check'):
+            self.check()
+
         
     @property
     def exists(self):
-        self.check()
-        lines = self.getoutput("screen -ls | grep " + self.name, quiet=True)
-#        print 22, "screen -ls | grep " + self.name
-#        print 11, lines
+        lines = getoutput("screen -ls | grep " + self.name, quiet=True)
         if self.name in [".".join(l.split(".")[1:]).split("\t")[0] for l in lines]:
             return True
         return False
 
     @property
     def created(self):
+        '''
+        0 - timeout
+        1 - success
+        '''
         ti=timer(thr=self.timeout_thr)
         while not ti.timeout:
             if self.exists:
-                return True
-        self.err('Check Screen \'' + self.name + '\' Timeout: '+str(self.timeout_thr)+'!' )
-        return False
+                return 1
+        return 0
 
     @property
     def status(self):
@@ -85,7 +132,7 @@ class screen(DISPLAY, opprocess, opmsg):
     def pid(self):
         """set the screen information related parameters"""
         if self.exists:
-            infos = self.getoutput("screen -ls | grep %s" % (self.name), quiet=True)
+            infos = getoutput("screen -ls | grep %s" % (self.name), quiet=True)
             return infos[0].split('.')[0]
         else:
             return None
@@ -94,19 +141,20 @@ class screen(DISPLAY, opprocess, opmsg):
     def ttch(self):
         """set the screen information related parameters"""
         if self.exists:
-            infos = self.getoutput("screen -ls | grep %s" % (self.name), quiet=True)
+            infos = getoutput("screen -ls | grep %s" % (self.name), quiet=True)
             return infos[0].split()[-1]
         else:
             return None
         
     def attach(self):
         #cmd = "xterm -bg %s -T %s -e screen -r %s" % (XTERM_BG, self.name, self.name)
-        cmd = "xterm -T %s -e screen -r %s" % (self.name, self.name)
-        self.getoutput(cmd, wait=False, quiet=True)
+        self.detach()
+        cmd = "xterm -T %s -e screen -r %s" % (self.name, self.pid)
+        getoutput(cmd, wait=False, quiet=True)
 
     def detach(self):
         cmd = "screen -d " + self.name
-        self.getoutput(cmd, quiet=True)
+        getoutput(cmd, quiet=True)
         time.sleep(0.1)
 
     def cd(self, dir=''):
@@ -120,13 +168,14 @@ class screen(DISPLAY, opprocess, opmsg):
 
 
     def login_remote(self):
+        '''
+        1 - login successful
+        -1 - timeout
+        -2 - login failed
+        '''
         if self.remotehost == self.currenthost:
-            self.info('Screen %s login "%s" Successfully.' % (self.name, self.remotehost) )
-            return True
-        if self.DISP == None:
-            self.sendcommands('ssh -X ' + self.remotehost)
-        else:
-            self.sendcommands('ssh ' + self.remotehost)
+            return 1
+        self.sendcommands('ssh -X ' + self.remotehost)
         self.sendcommands('/bin/sync')
     
         ti=timer(thr=self.timeout_thr)
@@ -137,23 +186,24 @@ class screen(DISPLAY, opprocess, opmsg):
                 break
             time.sleep(0.5)
         if ti.timeout:
-            self.msg.err('Create Screen \'' + self.name + '\' Timeout: '+str(self.timeout_thr)+'!' )
-            return False
+            #self.msg.err('Create Screen \'' + self.name + '\' Timeout: '+str(self.timeout_thr)+'!' )
+            return -1
         self.prompt()
         if self.remotehost == self.currenthost:
-            self.info('Screen "%s" login "%s" Successfully.' % (self.name, self.remotehost) )
-            if self.DISP != None:
-                self.sendcommands('setenv DISP ' + self.DISP)
-            return True
+            return 1
         else:
-            self.err('Screen %s login "%s" Failed!' % (self.name, self.remotehost) )
-            return False
+            return -2
 
     def create(self):
-        self.check()
+        '''
+        0 - exists
+        1 - success
+        -1 - failed
+        -2 - prompt issue
+        -3 - login failed
+        '''
         if self.exists:
-            self.err('Screen \'' + self.name + '\' Exists!')
-            return False
+            return 0
         #print 'create new'
         ## create screen
         if self.screen_version in ADV_SCREEN_VERSION:
@@ -161,61 +211,62 @@ class screen(DISPLAY, opprocess, opmsg):
         else:
             cmd = 'xterm -e screen -t %s -S %s &' % (self.name, self.name)
         #print cmd
-        self.getoutput(cmd, quiet=True, wait=False)
+        getoutput(cmd, quiet=True, wait=False)
         ## check if created
         if self.created:
-            self.info('Screen "' + self.name + '" Created.')
             self.detach()
         else:
-            self.err('Screen \'' + self.name + '\' Created Failed!')
-            return False
+            return -1
         self.enable_logs()
         ## login
-        if not self.prompt(): return False
-        if not self.en_lsf:
-            if not self.login_remote(): return False
+        if not self.prompt(): return -2
+        if not self.login_remote(): return -3
         ## set directory
         self.cd()
-        return True
+        return 1
 
     def close(self):
+        '''
+            0 - status is not idle
+            1 - success
+            -1 - timeout
+        '''
         if self.status != 'idle':
-            self.info('Screen \'' + self.name + '\' is ' + self.status + '; Skip Exit.')
-            return False
+            return 0
         ti=timer(thr=3)
         while not ti.timeout:
             if self.exists:
                 pass
             else:
-                self.info('Close Screen "%s"' % (self.name))
-                return True
+                return 1
             if self.status == 'idle':
                 self.sendcommands('exit')
                 time.sleep(0.2)
+        return -1
 
     def prompt(self):
+        '''
+        0 - timeout, failed
+        1 - success
+        '''
         ti=timer(thr=self.timeout_thr)
         while not ti.timeout:
             if self.status == 'idle':
-                return True
+                return 1
             else:
-                #cmd = 'set hostname = \`hostname\`'
-                #self.sendcommands(cmd)
-                #time.sleep(0.2)
                 if self.screen_version in ADV_SCREEN_VERSION:
                     cmd = 'set prompt=\\\\\"[screen-`hostname`]%  \\\\\"'
                 else:
                     cmd = 'set prompt=\\"[screen-`hostname`]%  \\"'
                 self.sendcommands(cmd)
                 time.sleep(1)
-        self.err('Set Prompt Failed: \'' + self.name + '\' Timeout: '+str(self.timeout_thr)+'!' )
-        return False
+        return 0
     
     def enable_logs(self):
-        self.getoutput('mkdir -p '+os.path.dirname(self.screen_log), quiet=True)
+        getoutput('mkdir -p '+os.path.dirname(self.screen_log), quiet=True)
         self._screen_commands('termcapinfo xterm ti@:te@', "logfile " + self.screen_log, "log on", "logfile flush 0")
         
-        self.getoutput('touch '+self.screen_log, quiet=True)
+        getoutput('touch '+self.screen_log, quiet=True)
         self.logs=tailf(self.screen_log)
         self.logs.next()
 
@@ -229,7 +280,7 @@ class screen(DISPLAY, opprocess, opmsg):
         for command in commands:
             cmd = 'screen -x ' + self.name + ' -X eval \"' + command + '\"'
             #print cmd
-            self.getoutput(cmd, quiet=True)
+            getoutput(cmd, quiet=True)
             time.sleep(0.02)
 
     def sendcommands(self, *commands):
@@ -242,21 +293,21 @@ class screen(DISPLAY, opprocess, opmsg):
             #completeCmd = "screen -S %s -X eval \"%s\"" % (self.name,screenCmd)
             #print completeCmd
             #args = shlex.split(completeCmd)
-            self.getoutput(completeCmd, quiet=True)
+            getoutput(completeCmd, quiet=True)
             time.sleep(0.1)
           
     def ctrl_c(self):
         screenCmd = "stuff \'"+"\003\'"
         completeCmd = "screen -S %s -X eval \"%s\"" % (self.name,screenCmd)
         #args = shlex.split(completeCmd)
-        self.getoutput(completeCmd, quiet=True)
+        getoutput(completeCmd, quiet=True)
         time.sleep(0.1)
     
     @property
     def screen_version(self):
-         return self.getoutput('screen -v', quiet=True)[0].split()[2]
+         return getoutput('screen -v', quiet=True)[0].split()[2]
 
-class screens(opprocess, opmsg):
+class screens(object):
     def __init__(self, *args, **kwargs):
         super(screens, self).__init__(*args, **kwargs)
         self.basedir    = os.getcwd().split('/')[-1]
@@ -302,12 +353,12 @@ class screens(opprocess, opmsg):
         return [  scrn for scrn in self.screens_objects if scrn.status != 'idle' ]
 
     def wipe_all(self):
-        p=self.getoutput('screen -ls', quiet=True)
+        p=getoutput('screen -ls', quiet=True)
         for line in p.stdout.readlines():
             m = re.match( r'^\s+(\d+)\.(\S+)\s+\(Dead\s+\?\?\?\)', line )
             if m:
-                self.war('Remove Deaded Screen %s' % (m.group(1)))
-                self.getoutput('screen -wipe ' + m.group(1), quiet=True)
+                print 'Remove Deaded Screen %s' % (m.group(1))
+                getoutput('screen -wipe ' + m.group(1), quiet=True)
 
     def screen_filter(self, name='all', status='all'):
         screen_lists = []
@@ -331,8 +382,6 @@ class screens(opprocess, opmsg):
                 uniq.append(scrn)
                 screen_names.append(scrn.name)
         screen_lists = uniq
-        if len(screen_lists) == 0:
-            self.warn('No Screen selected.')
         return screen_lists
         
     def open(self, name='all', status='all'):
@@ -352,7 +401,6 @@ class screens(opprocess, opmsg):
             scrn.detach()
             if not scrn.exists:
                 continue
-            self.info('Open Screen: "%s"' % (scrn.name) ) 
             h = int(heigth * int( cnt / h_number ) )
             w = int(width  * cnt_h)
             cnt_h += 1
@@ -364,16 +412,13 @@ class screens(opprocess, opmsg):
             cmd = "xterm -geometry 64x9+%d+%d -T %s -e screen -r %s " % (w,h,scrn.name, scrn.pid)
             #print cmd
             #cmd = "xterm -bg %s -T %s -e screen -r %s &" % (XTERM_BG, scrn.name, scrn.name)
-            self.getoutput(cmd, wait=False, quiet=True)
+            getoutput(cmd, wait=False, quiet=True)
 
     def hide(self, name='all', status='all'):
         screen_lists = self.screen_filter(name, status)
             
         for scrn in screen_lists:
             scrn.detach()
-
-    def list(self):
-        self.info()
 
     def close(self, name='all', status='all'):
         screen_lists = self.screen_filter(name, status)
@@ -385,17 +430,19 @@ class screens(opprocess, opmsg):
             scrn.sendcommands(cmd)
 
     def lsitinfo(self):
-        self.info('#------------------------------------------------------- All Screen Information ----------------------------------------------------------------')
-        self.info('#- %-120s %10s' % ('Screen Name'.center(120), 'status'.center(10)) )
-        self.info('#- %-120s %10s' % ('-' * 110, '-'*8) )
-        for scrn in self.idle_lists:
-            self.info('#- %-120s %10s%10s' % (scrn.name, 'idle', scrn.ttch) )
+#        self.info('#------------------------------------------------------- All Screen Information ----------------------------------------------------------------')
+#        self.info('#- %-120s %10s' % ('Screen Name'.center(120), 'status'.center(10)) )
+#        self.info('#- %-120s %10s' % ('-' * 110, '-'*8) )
+#        for scrn in self.idle_lists:
+#            self.info('#- %-120s %10s%10s' % (scrn.name, 'idle', scrn.ttch) )
+#
+#        for scrn in self.busy_lists:
+#            self.info('#- %-120s %10s%10s' % (scrn.name, 'busy', scrn.ttch) )
+#        self.info('#-------------------------------------------------------------------------------------------------------------------------------------------\n')
+        pass
 
-        for scrn in self.busy_lists:
-            self.info('#- %-120s %10s%10s' % (scrn.name, 'busy', scrn.ttch) )
-        self.info('#-------------------------------------------------------------------------------------------------------------------------------------------\n')
-
-#if __name__ == '__main__':
+if __name__ == '__main__':
+    sc = screen(name ='OP4#'+'sujielei:'+'cworst:'+'screenutils:', remotehost = 'aa')
 #    disp = DISPLAY()
 #    disp.show()
 #    if screen().screen_version == '4.03.01':
