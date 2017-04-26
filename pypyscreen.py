@@ -4,7 +4,7 @@ import os, time, socket
 import re
 ## user module
 #import shlex
-from opfilehandle import tailf, filetail
+from os.path import isfile, getsize
 from subprocess import Popen, PIPE, STDOUT
 #from oplsf import oplsf
 ###
@@ -16,6 +16,29 @@ SCREEN_LS_COLORS     = 'no=00:fi=02;31:di=02;34:ln=02;36:pi=40;33:so=02;31:bd=40
 ADV_SCREEN_VERSION = ['4.03.01', '4.01.00devel']
 
 
+def tailf(file_):
+    last_size = getsize(file_)
+    while True:
+        cur_size = getsize(file_)
+        if ( cur_size != last_size ):
+            f = open(file_, 'r')
+            if cur_size > last_size: f.seek(last_size)
+            else: f.seek(0)
+            text = f.read()
+            f.close()
+            last_size = cur_size
+            yield text
+        else:
+            yield ""
+
+def filetail(file,num=-1):
+    try:
+        fp = open(file,'rU')
+        line = fp.readlines()
+        fp.close()
+        return line[num]
+    except:
+        return ""
 
 class timer(object):
     def __init__(self,thr=5):
