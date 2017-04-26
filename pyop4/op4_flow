@@ -1,0 +1,91 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Feb 27 14:51:01 2017
+
+@author: marshals
+"""
+from opbase import opstage, opflowcontrol
+import sys
+#from Crypto.Cipher import AES
+#from Crypto import Random
+
+import argparse
+#os.chdir('/proj/OP4/WORK/marshals/proj/project_bee/IDR/WORK/marshals/ORCA_TOP/V-0305_S0304_F0303')
+#os.chdir(os.getenv('HOME'))
+#---------------------------- parser args ---------------------------------------------------------
+parser = argparse.ArgumentParser(description='''
+Run the stage
+''')
+
+parser.add_argument("-src", dest='source_stage',
+                    help='the name of source stage',
+                    action="store")
+parser.add_argument("-dst", dest='current_stage',
+                    help='the name of submit stage',
+                    action="store")
+parser.add_argument("-scenario", dest='scenario', default='',
+                    help='The name of corner(for stages based on corner specified like: PT). default: ""',
+                    action="store")
+parser.add_argument("-ow", dest='over_write',
+                    help='over write the exists run script. default: not overwirte',
+                    action="store_true")
+parser.add_argument("-nx", dest='no_exit',
+                    help='no exit after current stage finished. default: exit after stage finished',
+                    action="store_true")
+parser.add_argument("-debug", dest='repl_debug',
+                    help='debug strings will be added in replaced scripts',
+                    action="store_true")
+parser.add_argument("-run", dest='run_task',
+                    help='use this switch to enable run dst stage',
+                    action="store_true")
+
+
+parser.add_argument("-from", dest='from_stage',
+                    help='the name of stage from',
+                    action="store")
+parser.add_argument("-to", dest='to_stage',
+                    help='the name of stage to',
+                    action="store")
+parser.add_argument("-keyword_scenario", dest='keyword_scenario', default=[],
+                    help='The name of corner(for stages based on corner specified like: PT). default: ""',
+                    action="store")
+parser.add_argument("-thr", dest='through_stage',
+                    help='the name of the stage for through when change different tool',
+                    action="append")
+
+args = parser.parse_args()
+
+#args.keyword_scenario = ' '.join(args.keyword_scenario)
+#args.through_stage    = ' '.
+
+kwargs = {}
+for k,v in args.__dict__.iteritems():
+    if v != None and v != False :
+        kwargs[k] = v
+        
+if args.source_stage or args.current_stage:
+    stage = opstage()
+    check_arg = stage.opstage_check_args(**kwargs)
+    
+    if not check_arg:
+        parser.print_help()
+        sys.exit(1)
+        
+    status = stage.init_stage()
+    
+    if args.run_task and status == 1:
+        stage.submit()
+        stage.monitor()
+else:
+    flow = opflowcontrol()
+    check_arg = flow.opflowcontrol_check_args(**kwargs)
+
+    if not check_arg:
+        parser.print_help()
+        sys.exit(1)
+        
+    status=flow.init_flow()
+
+
+

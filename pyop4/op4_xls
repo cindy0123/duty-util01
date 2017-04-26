@@ -1,0 +1,124 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Apr 24 15:36:22 2017
+
+@author: marshals
+"""
+
+import argparse
+from opbase import opxls
+from opbase.opjson import dump, dumps
+xls = opxls()
+#---------------------------- parser args ---------------------------------------------------------
+parser = argparse.ArgumentParser(description='''
+Initialize the project directory for OP4 platform.
+Run it in /proj/{project name} which should be created by IT.
+''')
+#---------------------------- define args ---------------------------------------------------------
+parser.add_argument("--repo", dest='parse_repo',
+                    help="",
+                    action="store_true")
+parser.add_argument("--tool", dest='parse_tool',
+                    help="",
+                    action="store_true")    
+parser.add_argument("--block", dest='parse_block',
+                    help="",
+                    action="store_true")    
+parser.add_argument("--sys", dest='parse_sys',
+                    help="",
+                    action="store_true")  
+parser.add_argument("--global", dest='parse_global',
+                    help="",
+                    action="store_true")
+parser.add_argument("--proj", dest='parse_project',
+                    help="",
+                    action="store_true")
+parser.add_argument("--flow", dest='parse_flow',
+                    help="",
+                    action="store_true") 
+parser.add_argument("-o", "--output", dest='output_file',
+                    help="",
+                    action="store")
+parser.add_argument("-i", "--input", dest='input_file',
+                    help="",
+                    action="store")
+parser.add_argument("-type", dest='output_type', default='conf', 
+                    help="",
+                    action="store")
+
+args = parser.parse_args()
+from opconfig import opconfig
+xls.info('Output format: %s' % ( args.output_type ) )
+output_file = os.path.splitext(args.output_file)[0] + '.' + args.output_type
+if args.parse_repo and args.input_file and args.output_file:
+    xls.info('Paser %s for repository' % (args.input_file))
+    xls.info('Output %s' % (output_file))
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.parse_repo_sheet(args.input_file), output_file)
+    else:
+        dump(xls.parse_repo_sheet(args.input_file), output_file)
+    xls.info("Finished.\n")
+    
+if args.parse_tool and args.input_file and args.output_file:
+    xls.info('Paser %s for Tool' % (output_file))
+    xls.info('Output %s' % (output_file))  
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.parse_EDA_TOOLS(args.input_file), output_file)        
+    else:
+        dump(xls.parse_EDA_TOOLS(args.input_file), output_file)
+    xls.info("Finished.\n")
+    
+if args.parse_block and args.input_file and args.output_file:
+    xls.info('Paser %s for Block Level Varibale' % (args.input_file))
+    xls.info('Output %s' % (output_file))        
+    xls.split_eda_var_by_level(args.input_file)
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.BLOCK_VAR_DICT, output_file)
+    else:
+        dump(xls.BLOCK_VAR_DICT, output_file)
+    xls.info("Finished.\n")
+    
+if args.parse_sys and args.input_file and args.output_file:
+    xls.info('Paser %s for System Level Varibale' % (args.input_file))
+    xls.info('Output %s' % (output_file))        
+    xls.split_eda_var_by_level(args.input_file)
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.SYS_VAR_DICT, output_file)
+    else:
+        dump(xls.SYS_VAR_DICT, output_file)
+    xls.info("Finished.\n")
+    
+if args.parse_global and args.input_file and args.output_file:
+    xls.info('Paser %s for Global Level EDA TOOL Varibale' % (args.input_file))
+    xls.info('Output %s' % (output_file))
+    xls.split_eda_var_by_level(args.input_file)
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.GLOBAL_VAR_DICT, output_file)
+    else:
+        dump(xls.GLOBAL_VAR_DICT, output_file)
+    xls.info("Finished.\n")
+
+if args.parse_project and args.input_file and args.output_file:
+    xls.info('Paser %s for Proect Level Varibale' % (args.input_file))
+    xls.info('Output %s' % (output_file))
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.parse_PROJECT(args.input_file),  output_file)
+    else:
+        dump(xls.parse_PROJECT(args.input_file),  output_file)
+    xls.info("Finished.\n")
+    
+if args.parse_flow and args.input_file and args.output_file:
+    xls.info('Paser %s for Flow Config' % (args.input_file))
+    xls.info('Output %s' % (output_file))
+    if args.output_type == 'conf':
+        opconfig().write_conf(xls.parse_FLOW(args.input_file),  output_file)
+    else:
+        dump(xls.parse_FLOW(args.input_file),  output_file)
+    xls.info("Finished.\n")        
+#print dumps(d)
+#print dump(xls.get_EDA_VAR('/media/sf_D_DRIVE/ICC2_variables_3.1.xlsx'), 'test.json')
+#print xls.split_eda_var_by_level('/media/sf_D_DRIVE/ICC2_variables_3.1.xlsx')
+
+
+

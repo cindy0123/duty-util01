@@ -1,0 +1,367 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Feb 21 17:24:58 2017
+
+@author: marshals
+"""
+
+import sys, os, getpass, time
+from opbase import op4env, basegit, opjson, opmsg
+
+class op4_init(op4env):
+    def __init__(self, *args, **kwargs):
+        super(op4_init, self).__init__(*args, **kwargs)
+        
+    def initialize_project(self, *args, **kwargs):
+        #- defaults
+        self.project_dir         = kwargs.get('project_root_path', os.getcwd())
+        self.project_name        = kwargs.get('project', os.getcwd().split('/')[-1])
+        self.repo_branch_name    = kwargs.get('repo_branch', 'master')
+
+        #- set config file just for repo
+        self.set_config_location( quiet=True, *args, **kwargs)
+        #init system dir, default repo location, set config locations        
+        self.info('Start initilize Onepiece4 environment ...')
+        self.paser_system_dirs()
+        self.init_repo_loction(*args, **kwargs)
+
+        self.info('Start initilize project directory ...')
+        if not os.path.exists(self.REPO_CONFIG):
+            self.err('Source Repository Config file not found: "%s"' % (self.REPO_CONFIG))
+            return False
+        else:
+            self.mkdir_proj_dirs()
+            # checkout
+            self.checkout_repo(src='ref', dst='project', src_branch=self.repo_branch_name, dst_branch=self.project_name)
+            self.repo = self.get_section('repo_setting.conf')
+            # set config file location for all
+            self.set_config_location()
+            # update global config
+            
+            self.update_repo_config(self.repo)
+            self.update_project_config()
+            self.update_sys_config()
+            self.commit(repo_path=self.project_config_repo)
+            # update block config
+            # self.update_user_config()
+            # self.commit(repo_path=self.project_user_config_repo)
+            self.info('')
+            self.info('### Finish Init Project directory. ###')
+            self.info('Execute "init_op4_user.csh" to create user working directory.')
+            return True
+
+    def initialize_user(self, *args, **kwargs):
+        self.project_dir         = kwargs.get('project_root_path', os.getcwd())
+        
+        self.set_config_location()
+        if not os.path.exists(self.REPO_CONFIG):
+            self.err('Can not found "%s"' % (self.REPO_CONFIG))
+            self.err('Invialid project dir "%s" or project dir not initilized.' % (self.project_dir))
+            self.info('Please run in /proj/{project name} or define project root path by "-r"/"--root_path"')
+            self.info('  Or, init_op4_proj')
+            sys.exit(1)
+        self.paser_system_dirs(quiet=True)
+
+        #- args
+        self.block_name          = kwargs.get('BLOCK', 'div_5')
+        self.design_phase        = kwargs.get('DESIGN_PHASE', 'SDR')
+        
+        self.info('Start initilize user directory ...')
+        self.paser_user_dirs()
+        invilid_item = False
+        if self.block_name not in self.allvar['BLOCK_NAME_LIST'].split():
+            self.err('Block name (%s) invialid.' % (self.block_name))
+            self.info('Avialiable name is: %s' % (self.allvar['BLOCK_NAME_LIST']))
+            invilid_item = True
+        if self.design_phase not in self.allvar['DESIGN_PHASES'].split():
+            self.err('Design Phase (%s) invialid.' % (self.design_phase))
+            self.info('Avialiable name is: %s' % (self.allvar['DESIGN_PHASES']))
+            invilid_item = True
+        if invilid_item:  sys.exit(1)
+        if os.path.exists(self.block_dir):
+            self.err('Working directory already exists (%s)' % (self.block_dir))
+            self.warn('Skip init.')
+        else:
+            self.mkdir_user_dirs()
+            self.update_flow_config()
+        self.info('### Finish Init User directory. ###')
+        self.info('Goto the %s ' % (self.block_dir) )
+        self.info('And Execute "init_op4_task.csh" to create task working directory.')
+
+    def initialize_task(self, *args, **kwargs):
+
+        self.FLOW_CONFIG         = kwargs.get('task_conf', None)
+        self.init_fp_version     = kwargs.get('init_fp_version', None)
+        self.init_sdc_version    = kwargs.get('init_sdc_version', None)
+        self.init_vnet_version   = kwargs.get('init_vnet_version', None)
+
+        if self.FLOW_CONFIG == None:
+            self.err('Flow setup config file required!')
+            sys.exit(1)
+        if not os.path.exists(self.FLOW_CONFIG):
+            self.err('Flow setup config file %s Not Found!' % (self.FLOW_CONFIG) )
+            sys.exit(1)
+            
+        self.info('Use Flow-Config file: %s' % (self.FLOW_CONFIG) )
+        self.read_conf(self.FLOW_CONFIG)
+        allvar                   = self.all_config()
+        self.FLOW                = self.get_section(os.path.basename(self.FLOW_CONFIG))
+        
+        self.write_conf(self.FLOW, self.FLOW_CONFIG)
+        self.project_dir         = allvar['PROJECT_DIR']
+        print self.project_dir
+
+        self.set_config_location(quiet=True, update_user_setup=False)
+
+        is_exit = False
+        #check options
+        for option in ['fp', 'sdc', 'vnet']:
+            key=option.upper()+'_VERSION'
+            if getattr(self, 'init_%s_version' % (option) ) == None:
+                setattr(self, 'init_%s_version' % (option), allvar[key])
+                if getattr(self, 'init_%s_version' % (option) ) == '':
+                    self.err('Init %s version not defined!' % (key) )
+                    self.info('Can be defined by option "-%s version" or fill in flow config file.' % (option) )
+                    is_exit = True
+            else:
+                self.FLOW = self.set_group_var(self.FLOW, key, getattr(self, 'init_%s_version' % (option) ))
+                
+        if is_exit: sys.exit(1)
+
+        self.paser_system_dirs()
+        
+        self.paser_task_dirs()
+        self.parse_init_version()
+
+        self.init_repo_loction()
+
+        self.mkdir_task_dirs()
+        self.dst_branch   = '%s#%s#%s' % ( self.project_name, self.block_name, self.init_task_version )
+        self.checkout_repo(src='project', dst='local', src_branch=self.project_name, dst_branch=self.dst_branch)
+        
+        self.set_config_location(quiet=True, update_user_setup=True, update_var=False)
+        self.write_conf(self.FLOW, self.FLOW_CONFIG )
+#        linked_flow_setup = os.path.join(self.run_dir, os.path.basename(self.FLOW_CONFIG))
+#        if not os.path.exists(linked_flow_setup):
+#            os.symlink(self.FLOW_CONFIG, linked_flow_setup)
+        self.set_config_location(update_user_setup=True)
+        
+        self.update_system_config()
+        self.prepare_tool_setup_files()
+        
+        self.commit(repo_path=self.local_config_repo)
+        self.commit(repo_path=self.local_flow_repo)
+
+    def checkout_repo(self, src='ref', dst='project', src_branch='master', dst_branch='master'):
+        for repo_type, repo_dict in self.get_section_vars('repo_setting.conf').iteritems():
+            src_repo = getattr(self, '%s_%s_repo' % (src, repo_type) )
+            dst_repo = getattr(self, '%s_%s_repo' % (dst, repo_type) )
+            self.info('')
+            self.info('Start Check-out repo "%s" to %s Template:' % (repo_type, dst))
+            self.info('    %s (%s)' % ( src_repo, src_repo) )
+            self.info('        ==> %s (%s) ...' % ( dst_repo,  dst_branch ) )
+            if self.checkout(src=src_repo, dst=dst_repo,
+                             src_branch=src_branch, dst_branch=dst_branch):
+                self.info('Finish Checkout.')
+            else:
+                self.err('Failed Checkout.')
+                
+    def update_system_config(self):
+        self.info('Update: %s' % (self.SYSTEM_CONFIG))
+        self.SYSTEM = self.get_section(os.path.basename(self.SYSTEM_CONFIG))
+        self.SYSTEM = self.get_section(os.path.basename(self.SYSTEM_CONFIG))
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'RELEASE_DIR', self.release_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'DATA_DIR', self.data_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'LOG_DIR', self.log_dir )       
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'RPT_DIR', self.rpt_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'RUN_DIR', self.run_dir)   
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'SCR_DIR', self.scr_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'SUM_DIR', self.sum_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'CONF_DIR', self.local_config_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'GLOBAL_CONF_DIR', self.local_config_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'USER_CONF_DIR', self.local_config_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'COMMON_SET_DIR', self.local_setup_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'FLOW_DIR', self.local_flow_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'PLUGIN_DIR', self.local_plugins_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'PROC_DIR', self.local_proc_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'USER_SCRIPTS_DIR', self.user_scr_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'SIGNOFF_SCRIPT_DIR_LOCAL', self.local_signoff_check_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'SIGNOFF_SCRIPT_DIR_PROJ', self.project_signoff_check_repo)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'BLOCK_DIR', self.block_dir)
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'PROJ_DIR', self.project_dir)
+        self.write_conf(self.SYSTEM, self.SYSTEM_CONFIG )
+                
+    def prepare_tool_setup_files(self):
+        self.comment_length = 120
+        self.single_comment = '#'*self.comment_length+'\n'
+        
+        self.info('Update: %s' % (self.FLOW_CONFIG))
+        self.write_conf(self.FLOW, self.FLOW_CONFIG )
+                
+        self.info('Update: %s' % (self.INPUT_DATA_CONFIG))
+        self.write_conf(self.INPUT_DATA, self.INPUT_DATA_CONFIG )
+        
+#        self.info('Update: %s' % (self.setup_tcl))
+#        self.config2script(self.FLOW_CONFIG, self.setup_tcl, script_type='tcl')
+#        self.info('Update: %s' % (self.setup_csh))
+#        self.config2script(self.FLOW_CONFIG, self.setup_csh, script_type='csh')
+#        
+#        self.info('Update: %s' % (self.system_tcl))
+#        self.config2script(self.SYSTEM_CONFIG, self.system_tcl, script_type='tcl')
+#        self.info('Update: %s' % (self.system_csh))
+#        self.config2script(self.SYSTEM_CONFIG, self.system_csh, script_type='csh')
+#        
+#        self.info('Update: %s' % (self.input_data_tcl))
+#        self.config2script(self.INPUT_DATA_CONFIG, self.input_data_tcl, script_type='tcl')
+#        self.info('Update: %s' % (self.system_csh))
+#        self.config2script(self.INPUT_DATA_CONFIG, self.input_data_csh, script_type='csh')        
+
+    def update_repo_config(self, repo):
+        self.info('Update: %s' % (self.REPO_CONFIG))
+        self.write_conf(repo, self.REPO_CONFIG)
+
+    def update_project_config(self):
+        self.info('Update: %s' % (self.PROJ_CONFIG))
+        self.PROJ          = self.get_section(os.path.basename(self.PROJ_CONFIG))
+        self.PROJ = self.set_group_var(self.PROJ, 'PROJECT_NAME', self.project_name)
+        self.write_conf(self.PROJ, self.PROJ_CONFIG)
+        
+    def update_sys_config(self):
+        self.info('Update: %s' % (self.SYSTEM_CONFIG))
+        self.SYSTEM          = self.get_section(os.path.basename(self.SYSTEM_CONFIG))
+        self.SYSTEM = self.set_group_var(self.SYSTEM, 'PROJECT_DIR', self.project_dir)
+        self.write_conf(self.SYSTEM, self.SYSTEM_CONFIG)
+        
+    def update_user_config(self):
+        pass
+#        self.FLOW    = opjson.load(self.FLOW_CONFIG)
+#        self.info('Update: %s' % (self.FLOW_CONFIG))
+#        self.FLOW['Common settings variables']['PROJECT_NAME'] = self.project_name
+#        opjson.dump(self.FLOW, self.FLOW_CONFIG)
+    
+    def update_flow_config(self):
+        
+        self.FLOW        = self.get_section(os.path.basename(self.FLOW_CONFIG))
+        self.FLOW_CONFIG = os.path.join(self.block_dir, '200_user_setup.conf')
+        self.info('Generate flow config file: %s' % (self.FLOW_CONFIG))
+        
+        self.FLOW = self.set_group_var(self.FLOW, 'BLOCK_NAME', self.block_name)
+        self.FLOW = self.set_group_var(self.FLOW, 'design_phase', self.design_phase)
+        self.FLOW = self.set_group_var(self.FLOW, 'PROJECT_DIR', self.project_dir)
+#        self.FLOW['Flow Branches'] = {}
+#        self.FLOW['Flow Branches']['default'] = {}
+#        self.FLOW['Flow Branches']['default'] = self.FLOW_CONTROL['Flow Branches']['default']
+#        for f, f_dict in self.FLOW['Flow Branches'].iteritems():
+#            if f=='index': continue
+#            if not f_dict.has_key('ECO_STRING'):
+#                self.FLOW['Flow Branches'][f]['ECO_STRING'] = ''
+#            if not f_dict.has_key('ECO_SCRIPTS'):
+#                self.FLOW['Flow Branches'][f]['ECO_SCRIPTS'] = ''
+        
+        self.write_conf(self.FLOW, self.FLOW_CONFIG)
+
+
+    def mkdir_proj_dirs(self):
+        for i in ['project_template', 'lib', 'sc_lib', 'io_lib', 'mem_lib', 'ip_lib', 'techfile', 'project_config']:
+            eval('self.mkdir(self.%s_dir)' % (i))
+            
+    def mkdir_user_dirs(self):
+        for i in ['work', 'release', 'release_vnet', 'release_sdc', 'release_fp', 'release_upf']:
+            eval('self.mkdir(self.%s_dir, \"ALL\")' % (i))
+        for i in ['user', 'block']:
+            eval('self.mkdir(self.%s_dir, \"OWNER\")' % (i))
+
+    def mkdir_task_dirs(self):
+        for i in ['run', 'log', 'sum', 'data', 'rpt', 'scr']:
+            eval('self.mkdir(self.%s_dir)' % (i))
+            
+if __name__ == '__main__':
+    import argparse
+    #import shutil
+    #os.chdir('/proj/OP4/WORK/marshals/proj/div_5')
+    #if os.path.exists('/proj/OP4/WORK/marshals/proj/div_5/TEMPLATES'):
+    #    shutil.rmtree('/proj/OP4/WORK/marshals/proj/div_5/TEMPLATES')
+    
+    #---------------------------- parser args ---------------------------------------------------------
+    parser = argparse.ArgumentParser(description='''
+    Initialize the project directory for OP4 platform.
+    Run it in /proj/{project name} which should be created by IT.
+    ''')
+    #---------------------------- args for init project ---------------------------------------------------------
+    parser.add_argument("-p", "--proj", dest='init_proj',
+                        help="Initilize the project directory. Project directory will be current directory. Project name will be current directory name",
+                        action="store_true")
+
+    parser.add_argument("-c", "--cfg", dest='repository_config_file',
+                        action="store",
+                        help="The path of op4 repository config files. Optional used with '-p' option. Default: $OP_PATH/sys_settings.json")
+
+    parser.add_argument("-b", "--repo_branch", dest='repo_branch',
+                        action="store", default="master",
+                        help="The branch name in source repository. Optional used with '-p' option. Default: 'master' branch")
+
+    #---------------------------- args for init user ---------------------------------------------------------
+    parser.add_argument("-u", "--user", dest='init_user',
+                        help="Initilize the working directory.",
+                        action="store_true")
+
+    parser.add_argument("-r", "--project_root_path", dest='project_root_path',
+                        action="store",
+                        help="root path of project. defatul: current directory.")
+    
+    parser.add_argument("-d", "--design", dest='BLOCK',
+                        action="store",
+                        help="name of Block used for initilize user directory")
+    
+    parser.add_argument("-dp", "--design_phase", dest='DESIGN_PHASE',
+                        action="store",
+                        help="name of design phase used for initilize user directory")
+
+    #---------------------------- args for init task ---------------------------------------------------------
+    parser.add_argument("-t", "--task", dest='init_task',
+                        help="Initilize the working directory.",
+                        action="store_true")
+
+    parser.add_argument("-fp", dest='init_fp_version',
+                        action="store",
+                        help="Version of initial FP")
+    
+    parser.add_argument("-sdc", dest='init_sdc_version',
+                        action="store",
+                        help="Version of initial SDC")
+    
+    parser.add_argument("-vnet", dest='init_vnet_version',
+                        action="store",
+                        help="Version of initial VNET")
+
+    parser.add_argument("-upf", dest='init_upf_version',
+                        action="store",
+                        help="Version of released UPF")
+
+    parser.add_argument("-scandef", dest='init_scandef_version',
+                        action="store",
+                        help="Version of released UPF")
+    
+    parser.add_argument("-tc", "--task_conf", dest='task_conf',
+                        action="store",
+                        help="config file of task")    
+    
+    
+    args = parser.parse_args()
+    kwargs = ', '.join([ '%s="%s"'% (k,v) for k,v in args.__dict__.iteritems() if v ])
+    init=op4_init()
+    if not args.init_proj and not args.init_user and not args.init_task:
+        init.err('Must Define one of following option:\n\t %s -p / -u / -t' % sys.argv[0])
+        parser.print_help()
+        sys.exit(1)
+    if args.init_proj:
+        eval('init.initialize_project(%s)' % (kwargs) )
+    if args.init_user:
+        if args.BLOCK == None or args.DESIGN_PHASE == None:
+            init.err('Please define BLOCK and DESIGN_PHASE!')
+            sys.exit(1)
+        eval('init.initialize_user(%s)' % (kwargs) )
+    if args.init_task:
+        eval('init.initialize_task(%s)' % (kwargs) )
+

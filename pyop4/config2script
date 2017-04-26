@@ -1,0 +1,129 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Mar 31 16:58:52 2017
+
+@author: marshals
+"""
+
+from opbase import opmsg
+from opbase import opjson
+import os
+from opbase import opconfig
+
+class config2script(opconfig, opmsg):
+    def __init__(self, *args, **kwargs):
+        super(config2script, self).__init__(*args, **kwargs)
+        
+    def check_args(self, *args, **kwargs):
+        confs     = kwargs.get('config_files'   , None)
+        infile    = kwargs.get('input_file'     , None)
+        tcl_conf  = kwargs.get('tcl_config'    , None)
+
+        if confs == None:
+            self.err('Must define confs file')
+            return False
+        
+        if infile==None and tcl_conf == None:
+            self.err('Must define input file or use --tcl for generate tcl format config')
+            return False
+        
+        if infile!=None and tcl_conf != None:
+            self.err('-in and --tcl are exclusive')
+            return False
+        
+        if infile and not os.path.exists(infile):
+            self.err('Can not find file: %s' % (infile))
+            return False
+        
+        return True
+            
+    def convert(self, *args, **kwargs):
+        tcl_conf  = kwargs.get('tcl_config'    , None)
+
+        if not self.check_args(*args, **kwargs):
+            return False
+        
+        if tcl_conf:
+            return self.__2tcl(*args, **kwargs)
+        else:
+            return self.__2tempt(*args, **kwargs)
+
+    def __2tcl(self, *args, **kwargs): 
+        confs     = kwargs.get('config_files'   , None)
+        outfile   = kwargs.get('output_file'    , None)
+        if len(confs.split()) > 1:
+            outfile = None
+        out = outfile
+
+        for conf in confs.split():
+            conf = os.path.realpath(conf)
+            if not os.path.exists(conf):
+                self.err('No such file: %s' % (conf))
+            if out==None:
+                outfile = os.path.splitext(conf)[0] + '.' + 'tcl'
+            self.config2script(conf, outfile)
+            self.info('Finished: %s' % (outfile) )
+        return True
+    
+    def __2tempt(self, *args, **kwargs): 
+        confs     = kwargs.get('config_files'   , None)
+        infile    = kwargs.get('input_file'     , None)
+        ext_name  = kwargs.get('ext_name'       , None)
+        outfile   = kwargs.get('output_file'    , None)
+
+        if outfile==None:
+            if ext_name == None:
+                outfile = os.path.splitext(infile)[0] + '.' + 'tcl'
+            else:
+                outfile = os.path.splitext(infile)[0] + '.' + ext_name
+                
+        self.repl_op4var(infile, outfile, self.ALLVAR(confs))
+        self.info('Finished: %s' % (outfile) )
+        return True
+    
+    def ALLVAR(self, confs):
+        for f in confs.split():
+            if not os.path.exists(f):
+                self.err('No such file: %s' % (f) )
+                continue
+            self.read_conf(f)
+        #print self.all_config()
+        return self.all_config()
+       
+
+if __name__ == '__main__':
+    import argparse
+    
+    #---------------------------- parser args ---------------------------------------------------------
+    parser = argparse.ArgumentParser(description='''
+    Used for replace the variable in the template file according to the config varialbe setting.
+    ''')
+    parser.add_argument("-conf", dest='config_files',
+                        help='''The list of config files''',
+                        action="append")
+    parser.add_argument("-in", dest='input_file',
+                        help='''The input template file''',
+                        action="store")
+    parser.add_argument("-out", dest='output_file',
+                        help='''the output file name. Default: a new file will be generate in the same directory of input files''',
+                        action="store")   
+    parser.add_argument("-ext", dest='ext_name',
+                        help='''extension name of the output file. Default: tcl''',
+                        action="store")
+    parser.add_argument("--tcl", dest='tcl_config',
+                        help='''extension name of the output file. Default: tcl''',
+                        action="store_true")    
+    #-------------------------------------- ---------------------------------------------------------
+    args = parser.parse_args()
+    conv=config2script()
+    #print args.config_files
+    args.config_files = ' '.join(args.config_files)
+    kwargs = ', '.join([ '%s="%s"'% (k,v) for k,v in args.__dict__.iteritems() if v ])
+    if not eval('conv.convert(%s)' % (kwargs) ):
+        parser.print_help()
+        
+    
+    #parser.print_help()
+    #/media/sf_depot/onepiece4/examples/in.tempt
+    #/media/sf_depot/onepiece4/examples/200_user_setup.json
